@@ -1,180 +1,153 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
-
-import math
-
-import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.envs import ManagerBasedRLEnvCfg
-from isaaclab.managers import EventTermCfg as EventTerm
-from isaaclab.managers import ObservationGroupCfg as ObsGroup
-from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
+import isaaclab.sim as sim_utils
 
-from . import mdp
+# 【修正 1】从 assets 导入 AssetBaseCfg (用于灯光和地面)
+from isaaclab.assets import ArticulationCfg, RigidObjectCfg, AssetBaseCfg
 
-##
-# Pre-defined configs
-##
+# 【修正 2】从 managers 导入所有 Term 配置类
+from isaaclab.managers import (
+    SceneEntityCfg,
+    ObservationGroupCfg as ObsGroup,
+    ObservationTermCfg as ObsTerm,
+    RewardTermCfg as RewTerm,
+    EventTermCfg as EventTerm,
+    TerminationTermCfg as DoneTerm
+)
 
-from isaaclab_assets.robots.cartpole import CARTPOLE_CFG  # isort:skip
+# mdp 只保留逻辑函数和 Action 配置类
+import isaaclab.envs.mdp as mdp
 
+# 导入机器人配置
+from realman_rl.assets.realman_cfg import REALMAN_RMC_CFG
 
-##
-# Scene definition
-##
+# --- 补充缺失函数 ---
+def object_pos_in_robot_frame(env, robot_cfg: SceneEntityCfg, object_cfg: SceneEntityCfg):
+    robot_root_pose = env.scene[robot_cfg.name].data.root_pose_w
+    object_root_pose = env.scene[object_cfg.name].data.root_pose_w
+    return object_root_pose[:, :3] - robot_root_pose[:, :3]
 
-
-@configclass
-class RealmanRlSceneCfg(InteractiveSceneCfg):
-    """Configuration for a cart-pole scene."""
-
-    # ground plane
-    ground = AssetBaseCfg(
-        prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
-    )
-
-    # robot
-    robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-    # lights
-    dome_light = AssetBaseCfg(
-        prim_path="/World/DomeLight",
-        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
-    )
-
-
-##
-# MDP settings
-##
-
+# --------------------------------------------------------
 
 @configclass
 class ActionsCfg:
-    """Action specifications for the MDP."""
-
-    joint_effort = mdp.JointEffortActionCfg(asset_name="robot", joint_names=["slider_to_cart"], scale=100.0)
-
+    """Action specifications."""
+    # Action 配置类确实是在 mdp 里的
+@configclass
+class ActionsCfg:
+    """Action specifications."""
+    # 手臂控制 (JointPositionActionCfg 默认带了 class_type，所以没报错)
+    arm_left = mdp.JointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["l_joint[1-7]"], 
+            scale=0.5,
+            use_default_offset=True,
+    )
+    arm_right = mdp.JointPositionActionCfg(
+            asset_name="robot",
+            joint_names=["r_joint[1-7]"],
+            scale=0.5,
+            use_default_offset=True,
+    )
+    
+    # --- 修正点：显式指定 class_type ---
+    gripper_left = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["l_Joint_finger[1-2]"],
+        scale=0.01625,        # 缩放
+        offset=0.01625,       # 偏移
+        use_default_offset=False, # 不使用默认姿态，使用我们上面的绝对偏移
+    )
+    
+    gripper_right = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["r_Joint_finger[1-2]"],
+        scale=0.01625,        # 缩放
+        offset=0.01625,       # 偏移
+        use_default_offset=False, # 不使用默认姿态，使用我们上面的绝对偏移
+    )
 
 @configclass
 class ObservationsCfg:
-    """Observation specifications for the MDP."""
-
     @configclass
     class PolicyCfg(ObsGroup):
-        """Observations for policy group."""
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+        
+        object_position = ObsTerm(
+            func=object_pos_in_robot_frame,
+            params={
+                "robot_cfg": SceneEntityCfg("robot"),
+                "object_cfg": SceneEntityCfg("object")
+            } 
+        )
 
-        # observation terms (order preserved)
-        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel)
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel)
-
-        def __post_init__(self) -> None:
-            self.enable_corruption = False
+        def __post_init__(self):
+            self.enable_corruption = True
             self.concatenate_terms = True
-
-    # observation groups
     policy: PolicyCfg = PolicyCfg()
-
 
 @configclass
 class EventCfg:
-    """Configuration for events."""
-
-    # reset
-    reset_cart_position = EventTerm(
+    reset_robot_joints = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]),
-            "position_range": (-1.0, 1.0),
-            "velocity_range": (-0.5, 0.5),
+            "asset_cfg": SceneEntityCfg("robot"),
+            "position_range": (-0.1, 0.1),
+            "velocity_range": (0.0, 0.0),
         },
     )
-
-    reset_pole_position = EventTerm(
-        func=mdp.reset_joints_by_offset,
-        mode="reset",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]),
-            "position_range": (-0.25 * math.pi, 0.25 * math.pi),
-            "velocity_range": (-0.25 * math.pi, 0.25 * math.pi),
-        },
-    )
-
 
 @configclass
 class RewardsCfg:
-    """Reward terms for the MDP."""
-
-    # (1) Constant running reward
-    alive = RewTerm(func=mdp.is_alive, weight=1.0)
-    # (2) Failure penalty
-    terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
-    # (3) Primary task: keep pole upright
-    pole_pos = RewTerm(
-        func=mdp.joint_pos_target_l2,
-        weight=-1.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]), "target": 0.0},
-    )
-    # (4) Shaping tasks: lower cart velocity
-    cart_vel = RewTerm(
-        func=mdp.joint_vel_l1,
-        weight=-0.01,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"])},
-    )
-    # (5) Shaping tasks: lower pole angular velocity
-    pole_vel = RewTerm(
-        func=mdp.joint_vel_l1,
-        weight=-0.005,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"])},
-    )
-
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.05)
+    joint_vel = RewTerm(func=mdp.joint_vel_l1, weight=-0.01, params={"asset_cfg": SceneEntityCfg("robot")})
 
 @configclass
 class TerminationsCfg:
-    """Termination terms for the MDP."""
-
-    # (1) Time out
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    # (2) Cart out of bounds
-    cart_out_of_bounds = DoneTerm(
-        func=mdp.joint_pos_out_of_manual_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-3.0, 3.0)},
+
+@configclass
+class RealmanRlSceneCfg(InteractiveSceneCfg):
+    # 机器人
+    robot = REALMAN_RMC_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    
+    # 【关键修正】使用 AssetBaseCfg，而不是 mdp.LightCfg
+    light = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0, color=(0.75, 0.75, 0.75)),
     )
-
-
-##
-# Environment configuration
-##
-
+    
+    # 【关键修正】使用 AssetBaseCfg，而不是 mdp.AssetBaseCfg
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(),
+    )
+    
+    object = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Object",
+        spawn=sim_utils.CuboidCfg(
+            size=(0.05, 0.05, 0.05),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0.0, 0.05)),
+    )
 
 @configclass
 class RealmanRlEnvCfg(ManagerBasedRLEnvCfg):
-    # Scene settings
     scene: RealmanRlSceneCfg = RealmanRlSceneCfg(num_envs=4096, env_spacing=4.0)
-    # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()
-    # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
 
-    # Post initialization
-    def __post_init__(self) -> None:
-        """Post initialization."""
-        # general settings
+    def __post_init__(self):
+        super().__post_init__()
         self.decimation = 2
-        self.episode_length_s = 5
-        # viewer settings
-        self.viewer.eye = (8.0, 0.0, 5.0)
-        # simulation settings
-        self.sim.dt = 1 / 120
+        self.episode_length_s = 5.0
+        self.viewer.eye = (1.5, 0.0, 1.2)
         self.sim.render_interval = self.decimation

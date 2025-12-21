@@ -75,6 +75,7 @@ if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
 
 """Rest everything follows."""
 
+import realman_rl
 import gymnasium as gym
 import logging
 import os
