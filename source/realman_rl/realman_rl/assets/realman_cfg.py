@@ -9,7 +9,7 @@ REALMAN_RMC_CFG = ArticulationCfg(
     # 1. 指定 USD 文件路径
     # 【注意】请把下面的路径改成你机器人的真实 USD 路径！
     spawn=sim_utils.UsdFileCfg(
-        usd_path="/home/user/realman_rl/source/realman_rl/realman_rl/assets/realman_rmc_aidal/overseas_75_b_v_description_rmg24_with_sites/overseas_75_b_v_description_rmg24_with_sites.usd",
+        usd_path="/home/user/realman_rl/source/realman_rl/realman_rl/assets/realman_rmc_aidal/overseas_75_b_v_description_rmg24_with_sites/realman.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             retain_accelerations=False,
@@ -23,7 +23,7 @@ REALMAN_RMC_CFG = ArticulationCfg(
     
     # 2. 定义初始状态
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.0), # 放在世界原点
+        pos=(1.0, 10.0, 1), # 放在世界原点
         joint_pos={
             # 给所有关节一个初始 0.0 的位置
             ".*": 0.0, 
@@ -42,7 +42,7 @@ REALMAN_RMC_CFG = ArticulationCfg(
             joint_names_expr=["l_joint[1-7]", "r_joint[1-7]"], 
             effort_limit=300.0,
             velocity_limit=100.0,
-            stiffness=800.0,
+            stiffness=400.0,
             damping=40.0,
         ),
         
