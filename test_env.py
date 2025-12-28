@@ -82,9 +82,7 @@ def main():
         # 生成随机动作 (Random Action)
         # 动作范围通常在 [-1, 1] 之间
         # 维度会自动匹配你的 ActionsCfg (arm_left + arm_right + grippers)
-        actions = torch.zeros(env.num_envs, env.action_space.shape[1], device=env.device)     
-        # 执行一步仿真
-        # 返回值: 观测, 奖励, 终止标志(Terminated), 截断标志(Truncated), 额外信息
+        actions = 2 * torch.rand(env.num_envs, env.action_space.shape[1], device=env.device) - 1        # 返回值: 观测, 奖励, 终止标志(Terminated), 截断标志(Truncated), 额外信息
         obs, rew, terminated, truncated, extras = env.step(actions)
         # 【新增】重置检测代码
         # terminated: 任务结束（比如掉地上了，或者目标达成了）
@@ -121,8 +119,8 @@ def main():
         # 如果 terminated 为 True，它会自动重置那个特定的环境
 
         sim_step += 1
-        if sim_step % 100 == 0:
-            print(f"Step {sim_step}: Environment is running smoothly.")
+        if sim_step % 20 == 0:
+            print(f"Step {sim_step} | Reward: {rew[0].item():.4f}")
 
     # 4. 关闭环境
     env.close()

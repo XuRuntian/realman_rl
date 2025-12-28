@@ -134,7 +134,7 @@ class RewardsCfg:
     reaching_left = RewTerm(
         func=reward_hand_reaching_object, weight=1.0, 
         params={
-            "robot_cfg": SceneEntityCfg("robot", body_names=["l_link7"]), # 请确认 URDF 名字
+            "robot_cfg": SceneEntityCfg("robot", body_names=["l_Link_finger1"]), # 请确认 URDF 名字
             "object_cfg": SceneEntityCfg("object"),
             "std": 0.25
         }
@@ -142,7 +142,7 @@ class RewardsCfg:
     reaching_right = RewTerm(
         func=reward_hand_reaching_object, weight=1.0, 
         params={
-            "robot_cfg": SceneEntityCfg("robot", body_names=["r_link7"]), 
+            "robot_cfg": SceneEntityCfg("robot", body_names=["r_Link_finger1"]), 
             "object_cfg": SceneEntityCfg("object"),
             "std": 0.25
         }
@@ -245,7 +245,7 @@ class RealmanRlSceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
             # 桌子高度 0.6，中心点在 0.3，顶面在 0.6m
-            pos=(0.6, 0.0, 0.3)
+            pos=(0.6, 0.0, 0.375)
         ),
     )
     # 可抓取物体
@@ -276,7 +276,7 @@ class RealmanRlSceneCfg(InteractiveSceneCfg):
             # 【优化建议】降低初始高度
             # 桌子顶面在 0.6m，物体放 0.7m 让它轻轻掉下来即可
             # 之前 1.65m 太高了，容易砸穿
-            pos=(0.6, 0.0, 0.7), 
+            pos=(0.45, 0.0, 1.6),
         ),
     )
 

@@ -72,8 +72,6 @@ REALMAN_RMC_CFG = ArticulationCfg(
             # 注意：这里的正则需要根据你真实的关节名字来写！
             # 如果你的手臂关节叫 joint1-7，夹爪叫 finger1-2
             joint_names_expr=["l_joint[1-7]", "r_joint[1-7]"], 
-            # effort_limit=300.0,
-            # velocity_limit=100.0,
             stiffness=400.0,
             damping=40.0,
         ),
