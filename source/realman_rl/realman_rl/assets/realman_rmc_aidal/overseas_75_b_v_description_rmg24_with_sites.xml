@@ -205,7 +205,7 @@
                           range="0 0.0325" actuatorfrcrange="-10 10" />
                         <geom type="mesh" rgba="0.75294 0.75294 0.75294 1" mesh="Link_finger2" />
                       </body>
-                      <site name="right_eef_site" pos="0 0 0" size="0.05" rgba="1 0 0 0.5"
+                      <site name="right_eef_" pos="0 0 0" size="0.05" rgba="1 0 0 0.5"
                         type="sphere" />
                       <site name="right_eef_sitexaxis" pos="0.025 0 0" size="0.025 0.0025 0.0025"
                         rgba="1 0 0 0.5" type="box" />

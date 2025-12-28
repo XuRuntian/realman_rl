@@ -253,7 +253,7 @@ class RealmanRlSceneCfg(InteractiveSceneCfg):
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.8, dynamic_friction=0.8),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.6, 0.0, 0.65), 
+            pos=(0.6, 0.0, 1.65), 
         ),
     )
 

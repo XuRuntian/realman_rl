@@ -82,15 +82,44 @@ def main():
         # 生成随机动作 (Random Action)
         # 动作范围通常在 [-1, 1] 之间
         # 维度会自动匹配你的 ActionsCfg (arm_left + arm_right + grippers)
-        actions = 2 * torch.rand(env.num_envs, env.action_space.shape[1], device=env.device) - 1
-        
+        actions = torch.zeros(env.num_envs, env.action_space.shape[1], device=env.device)     
         # 执行一步仿真
         # 返回值: 观测, 奖励, 终止标志(Terminated), 截断标志(Truncated), 额外信息
         obs, rew, terminated, truncated, extras = env.step(actions)
+        # 【新增】重置检测代码
+        # terminated: 任务结束（比如掉地上了，或者目标达成了）
+        # truncated:  时间耗尽（max_episode_length 到了）
+        if terminated.any() or truncated.any():
+            print(f"\n[RESET DETECTED] 在第 {sim_step} 步发生重置！")
+            print(f"  - Terminated (失败/完成): {terminated.item()}")
+            print(f"  - Truncated  (超时):     {truncated.item()}")
+    # ================= 🔍 侦探代码开始 =================
+        # 获取机器人所有 Link 的线性速度
+        # shape: (num_envs, num_links, 3)
+        robot_entity = env.scene["robot"]
+        link_vels = robot_entity.data.body_lin_vel_w
+        link_names = robot_entity.body_names # 获取所有 Link 的名字列表
 
+        # 计算速度的大小 (Norm)
+        vel_norms = torch.norm(link_vels, dim=-1) # shape: (num_envs, num_links)
+        # 找到最大速度
+        max_vel, max_idx = torch.max(vel_norms, dim=1) # 找到每个环境里最快的那个 Link 索引
+        
+        # 如果速度超过 10.0 (正常机器人不该动这么快)，就报警
+        if max_vel[0] > 10.0:
+            bad_link_name = link_names[max_idx[0]]
+            print(f"\n[🚨 警报] 捕捉到异常！")
+            print(f"💥 罪魁祸首是 Link: {bad_link_name}")
+            print(f"🚀 当前速度: {max_vel[0].item():.2f} m/s")
+            print(f"💀 请重点检查 {bad_link_name} 的质量(Mass)、碰撞(Collision)和惯量(Inertia)！\n")
+            
+            # 暂停一下让你看清
+            import time
+            time.sleep(10)
+        # ================= 🔍 侦探代码结束 =================
         # 这里的 reset 是由 ManagerBasedRLEnv 内部自动处理的
         # 如果 terminated 为 True，它会自动重置那个特定的环境
-        
+
         sim_step += 1
         if sim_step % 100 == 0:
             print(f"Step {sim_step}: Environment is running smoothly.")

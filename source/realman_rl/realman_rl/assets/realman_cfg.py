@@ -10,6 +10,16 @@ REALMAN_RMC_CFG = ArticulationCfg(
     # 【注意】请把下面的路径改成你机器人的真实 USD 路径！
     spawn=sim_utils.UsdFileCfg(
         usd_path="/home/user/realman_rl/source/realman_rl/realman_rl/assets/realman_rmc_aidal/overseas_75_b_v_description_rmg24_with_sites/realman.usd",
+        
+        # 1. 【新增】这里是让它站稳的关键！
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False,
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=0,
+            fix_root_link=True,  # <--- 将底座焊死在空间中，不受重力掉落影响
+        ),
+
+        # 2. 原有的刚体属性保留
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             retain_accelerations=False,
@@ -23,10 +33,12 @@ REALMAN_RMC_CFG = ArticulationCfg(
     
     # 2. 定义初始状态
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(1.0, 10.0, 1), # 放在世界原点
+        # pos 参数决定了它“焊”在什么位置
+        # 如果桌子在 (0.6, 0, 0)，通常机器人应该在 (0, 0, 0)
+        # 你现在的 (1.0, 10.0, 1) 可能会让它离桌子非常远，建议先改回原点
+        pos=(0, 3.0, 2.0), 
         joint_pos={
-            # 给所有关节一个初始 0.0 的位置
-            ".*": 0.0, 
+            ".*": 0.0,  # 所有关节初始位置设为 0
         },
     ),
 
@@ -40,8 +52,8 @@ REALMAN_RMC_CFG = ArticulationCfg(
             # 注意：这里的正则需要根据你真实的关节名字来写！
             # 如果你的手臂关节叫 joint1-7，夹爪叫 finger1-2
             joint_names_expr=["l_joint[1-7]", "r_joint[1-7]"], 
-            effort_limit=300.0,
-            velocity_limit=100.0,
+            # effort_limit=300.0,
+            # velocity_limit=100.0,
             stiffness=400.0,
             damping=40.0,
         ),
@@ -54,5 +66,6 @@ REALMAN_RMC_CFG = ArticulationCfg(
             stiffness=200.0,    # 软一点，防止夹飞物体
             damping=10.0,
         ),
+
     },
 )
