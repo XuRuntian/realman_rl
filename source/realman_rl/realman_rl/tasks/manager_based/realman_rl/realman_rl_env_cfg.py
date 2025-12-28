@@ -226,12 +226,27 @@ class RealmanRlSceneCfg(InteractiveSceneCfg):
     table = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Table",
         spawn=sim_utils.CuboidCfg(
-            size=(0.8, 1.2, 0.6),
+            size=(0.8, 1.2, 1.5), 
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.4, 0.2)),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
+            
+            # 刚体属性：开启运动学 (Kinematic)，焊死不动，无视重力
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                kinematic_enabled=True, 
+                disable_gravity=True
+            ),
+            
+            # 【关键修复 1】必须开启碰撞属性！
+            # 没有这一行，桌子就是空气
+            collision_props=sim_utils.CollisionPropertiesCfg(
+                collision_enabled=True, 
+            ),
+
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=1.0, dynamic_friction=1.0),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.0, 0.3)),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            # 桌子高度 0.6，中心点在 0.3，顶面在 0.6m
+            pos=(0.6, 0.0, 0.3)
+        ),
     )
     # 可抓取物体
     object = RigidObjectCfg(
@@ -240,20 +255,28 @@ class RealmanRlSceneCfg(InteractiveSceneCfg):
             size=(0.05, 0.05, 0.05),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.6, 1.0)),
             
-            # 1. 刚体属性 (只管 运动学/重力/阻尼)
+            # 刚体属性：受重力影响
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 kinematic_enabled=False,
                 disable_gravity=False,
             ),
             
-            # 2. 【新增】质量属性 (专门管 质量/质心)
+            # 【关键修复 2】物体也必须开启碰撞！
+            collision_props=sim_utils.CollisionPropertiesCfg(
+                collision_enabled=True, 
+            ),
+            
+            # 质量属性
             mass_props=sim_utils.MassPropertiesCfg(mass=0.1), 
             
-            # 3. 物理材质 (摩擦力)
+            # 物理材质 (摩擦力)
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.8, dynamic_friction=0.8),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.6, 0.0, 1.65), 
+            # 【优化建议】降低初始高度
+            # 桌子顶面在 0.6m，物体放 0.7m 让它轻轻掉下来即可
+            # 之前 1.65m 太高了，容易砸穿
+            pos=(0.6, 0.0, 0.7), 
         ),
     )
 
