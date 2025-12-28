@@ -28,6 +28,7 @@ simulation_app = app_launcher.app
 # 2. 导入依赖库 (App 启动后才能导)
 # ==============================================================================
 import gymnasium as gym
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 import torch
 from rsl_rl.runners import OnPolicyRunner
 
@@ -52,20 +53,25 @@ print("[INFO] Realman RL package imported successfully.")
 # ==============================================================================
 def main():
     # 1. 准备环境配置
-    # parse_env_cfg 会自动处理 device 设置
     env_cfg = parse_env_cfg(
         args_cli.task, 
-        device="cpu" if args_cli.cpu else "cuda:0",  # <--- ✅ 修正为 device 字符串
+        device="cpu" if args_cli.cpu else "cuda:0", 
         num_envs=args_cli.num_envs, 
         use_fabric=not args_cli.disable_fabric
     )
     
     # 2. 创建环境
     print(f"[INFO] Creating environment for task: {args_cli.task}")
-    env = gym.make(args_cli.task, cfg=env_cfg)
+    # 建议加上 disable_env_checker=True
+    env = gym.make(args_cli.task, cfg=env_cfg, disable_env_checker=True)
+
+    # =============== 【修正点】开始 ===============
+    # 必须使用 Wrapper 包装环境，以适配 RSL-RL 运行器
+    env = RslRlVecEnvWrapper(env)
+    print(f"[INFO] Wrapped environment with RslRlVecEnvWrapper")
+    # =============== 【修正点】结束 ===============
 
     # 3. 加载 PPO 配置
-    # 这会从你 __init__.py 注册的 entry_point 读取 RealmanPPORunnerCfg
     agent_cfg = load_cfg_from_registry(args_cli.task, "rsl_rl_cfg_entry_point")
     
     # 覆盖部分参数
@@ -79,8 +85,8 @@ def main():
     print(f"[INFO] Logging to: {log_dir}")
     
     # 5. 创建 RSL-RL 运行器 (PPO)
-    # agent_cfg 是一个配置对象，to_dict() 转为字典传给 runner
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=env.device)
+    # 注意：device 通常可以直接从 env.device 获取 (Wrapper 会暴露这个属性)
+    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=env.device)    
     
     # 6. 开始训练
     print(f"[INFO] Starting training...")
@@ -94,6 +100,9 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"[ERROR] Exception occurred: {e}")
+        # 这里建议把 stack trace 打印出来，方便调试
+        import traceback
+        traceback.print_exc()
         raise e
     finally:
         # 关闭仿真 App
