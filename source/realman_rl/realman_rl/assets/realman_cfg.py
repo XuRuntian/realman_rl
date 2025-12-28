@@ -38,7 +38,27 @@ REALMAN_RMC_CFG = ArticulationCfg(
         # 你现在的 (1.0, 10.0, 1) 可能会让它离桌子非常远，建议先改回原点
         pos=(-0.5, 0, 0.3), 
         joint_pos={
-            ".*": 0.0,  # 所有关节初始位置设为 0
+            ".*_finger.*":0.0325,
+            # 关节
+            "r_joint1": 0.0,
+            "r_joint2": 2.27,
+            "r_joint3": -1.31,
+            "r_joint4": -1,  
+            "r_joint5": 0.0,
+            "r_joint6": 0.0,
+            "r_joint7": 0.0,
+
+            "l_joint1": 0.0,
+            "l_joint2": -2.27,
+            "l_joint3": 1.31,
+            "l_joint4": 1,
+            "l_joint5": 0,
+            "l_joint6": 0.0,
+            "l_joint7": 0.0,
+
+            #头
+            "head_joint2": -0.419,
+
         },
     ),
 
