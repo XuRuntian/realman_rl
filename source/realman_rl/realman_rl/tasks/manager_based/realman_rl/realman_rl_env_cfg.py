@@ -22,7 +22,7 @@ from isaaclab.managers import (
 )
 
 # 导入你的机器人资产配置
-from realman_rl.assets.realman_cfg import REALMAN_RMC_CFG
+from source.realman_rl.realman_rl.assets.realman import REALMAN_RMC_CFG
 
 
 # =========================================================

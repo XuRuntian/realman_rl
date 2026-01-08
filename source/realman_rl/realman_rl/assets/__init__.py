@@ -1,15 +1,29 @@
-# import gymnasium as gym
-# from .tasks.manager_based.realman_rl.realman_rl_env_cfg import RealmanRlEnvCfg
+# Copyright (c) 2024-2025 Ziqi Fan
+# SPDX-License-Identifier: Apache-2.0
 
-# # 注册环境
-# gym.register(
-#     id="Realman-Reach-v0",  # 给你的任务起个名字
-#     entry_point="isaaclab.envs:ManagerBasedRLEnv", # 使用标准的管理器环境
-#     disable_env_checker=True,
-#     kwargs={
-#         "env_cfg_entry_point": RealmanRlEnvCfg, # 指向你的配置类
-#         "rsl_rl_cfg_entry_point": f"{__name__}.agents.rsl_rl_ppo_cfg:RealmanPPORunnerCfg", # PPO配置(见下一步)
-#     },
-# )
+# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
 
-from .realman_cfg import REALMAN_RMC_CFG
+"""Package containing asset and sensor configurations."""
+
+import os
+import toml
+
+##
+# Configuration for different assets.
+##
+
+# Conveniences to other module directories via relative paths
+ISAACLAB_ASSETS_EXT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+"""Path to the extension source directory."""
+
+ISAACLAB_ASSETS_DATA_DIR = os.path.join(ISAACLAB_ASSETS_EXT_DIR, "data")
+"""Path to the extension data directory."""
+
+ISAACLAB_ASSETS_METADATA = toml.load(os.path.join(ISAACLAB_ASSETS_EXT_DIR, "config", "extension.toml"))
+"""Extension metadata dictionary parsed from the extension.toml file."""
+
+# Configure the module-level variables
+__version__ = ISAACLAB_ASSETS_METADATA["package"]["version"]

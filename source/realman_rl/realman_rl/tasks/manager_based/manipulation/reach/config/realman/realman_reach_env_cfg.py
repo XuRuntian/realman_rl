@@ -7,7 +7,8 @@ from isaaclab.utils import configclass
 
 from realman_rl.assets.realman import REALMAN_RMC_CFG
 from realman_rl.tasks.manager_based.manipulation.reach.reach_object_env_cfg import ReachObjectEnvCfg
-
+from robot_lab.assets.unitree import UNITREE_G1_29DOF_ACTION_SCALE, UNITREE_G1_29DOF_CFG
+from robot_lab.tasks.manager_based.beyondmimic.tracking_env_cfg import BeyondMimicEnvCfg
 
 
 @configclass
