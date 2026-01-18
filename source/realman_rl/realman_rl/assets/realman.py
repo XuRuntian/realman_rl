@@ -7,11 +7,11 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from realman_rl.assets import ISAACLAB_ASSETS_DATA_DIR
 
 # 定义机器人的配置
-REALMAN_RMC_CFG = ArticulationCfg(
+REALMAN_ROBOT_CFG = ArticulationCfg(
     # 1. 指定 USD 文件路径
     # 【注意】请把下面的路径改成你机器人的真实 USD 路径！
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/realman/data/realman_description/usd/realman.usd",
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/realman/realman_description/usd/realman.usd",
         
         # 1. 【新增】这里是让它站稳的关键！
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(

@@ -1,23 +1,14 @@
 # realman-rl
 - 启动isaac-sim
 ```
-conda deactivate && cd ~/IsaacLab && source .venv/bin/activate
+conda deactivate  && source ~/IsaacLab/.venv/bin/activate
 ${ISAACSIM_PATH}/isaac-sim.sh
 ```
-- 测试代码
+- 查看注册的环境
 ```
-python test_env.py --enable_cameras
-
+python scripts/list_envs.py
 ```
-- 训练
+- 测试环境
 ```
-# 加上 --enable_cameras 让仿真器开启渲染引擎
-python ~/realman_rl/train_my_robot.py \
-  --task Realman-Reach-v0 \
-  --num_envs 4096 \
-  --headless \
-  --enable_cameras
+python scripts/random_agent.py --task RealmanRL-Isaac-Manipulation-Reach-Realman-v0 --num_envs 1
 ```
-## 操作日志
-- 版本:isaac-sim 5.1
-为了运行test_env.py，在导出的usd文件中将worldBody中的Articulation Root属性删除了

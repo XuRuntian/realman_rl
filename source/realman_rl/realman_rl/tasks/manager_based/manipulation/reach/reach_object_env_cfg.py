@@ -25,7 +25,7 @@ import realman_rl.tasks.manager_based.manipulation.reach.mdp as mdp
 # 导入你的机器人配置 (假设你在 assets 文件夹下定义好了)
 # 如果你还没有定义 REALMAN_ROBOT_CFG，你需要先去 assets/realman.py 里定义它
 # 这里暂时假设你有一个默认的变量
-from realman_rl.assets import REALMAN_ROBOT_CFG 
+from realman_rl.assets.realman import REALMAN_ROBOT_CFG 
 
 ##
 # Scene definition
@@ -73,7 +73,7 @@ class CommandsCfg:
     # 使用我们写的 UniformPoseCommand
     ee_pose = mdp.UniformPoseCommandCfg(
         asset_name="robot",
-        body_names=["link6"],  # 【关键】请确保这里是你的末端执行器 Link 名称
+        body_names=["r_link7"],  # 【关键】请确保这里是你的末端执行器 Link 名称
         resampling_time_range=(2.0, 4.0), # 每 2-4 秒换一次目标，或者设置为 (1e9, 1e9) 让它一集只变一次
         ranges=mdp.UniformPoseCommandCfg.Ranges(
             pos_x=(0.3, 0.6),  # 机器人前方区域
@@ -115,7 +115,7 @@ class ObservationsCfg:
             func=mdp.eef_to_target_pos_b, # 这个函数在 observations.py 里
             params={
                 "command_name": "ee_pose", # 必须和 CommandsCfg 里的名字一致
-                "asset_cfg": SceneEntityCfg("robot", body_names=["link6"])
+                "asset_cfg": SceneEntityCfg("robot", body_names=["r_link7"])
             }
         )
         
@@ -136,7 +136,7 @@ class ObservationsCfg:
             func=mdp.eef_to_target_pos_b,
             params={
                 "command_name": "ee_pose", 
-                "asset_cfg": SceneEntityCfg("robot", body_names=["link6"])
+                "asset_cfg": SceneEntityCfg("robot", body_names=["r_link7"])
             }
         )
         actions = ObsTerm(func=mdp.last_action)
@@ -183,7 +183,7 @@ class RewardsCfg:
         params={
             "std": 0.25, # 精度控制
             "command_name": "ee_pose",
-            "asset_cfg": SceneEntityCfg("robot", body_names=["link6"]),
+            "asset_cfg": SceneEntityCfg("robot", body_names=["r_link7"]),
         },
     )
 
@@ -213,11 +213,11 @@ class TerminationsCfg:
     # 1. 超时 (Time Out)
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     
-    # 2. 关节超限 (Safety)
-    joint_pos_limit = DoneTerm(
-        func=mdp.joint_pos_limit,
-        params={"asset_cfg": SceneEntityCfg("robot")}
-    )
+    # # 2. 关节超限 (Safety)
+    # joint_pos_limit = DoneTerm(
+    #     func=mdp.joint_pos_limits,
+    #     params={"asset_cfg": SceneEntityCfg("robot")}
+    # )
 
 
 @configclass

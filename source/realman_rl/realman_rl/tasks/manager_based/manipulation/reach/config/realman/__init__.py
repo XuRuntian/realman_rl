@@ -11,7 +11,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.realman_reach_env_cfg:RealmanManipulationReachEnvCfg",# 类名字需要修改
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RealmanManipulationReachPPORunnerCfg", # 类名字需要修改
+        "env_cfg_entry_point": f"{__name__}.realman_reach_env_cfg:RealmanReachEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:RealmanManipulationReachPPORunnerCfg",
     },
 )

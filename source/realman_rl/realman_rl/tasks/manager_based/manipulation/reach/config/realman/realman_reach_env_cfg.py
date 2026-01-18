@@ -1,44 +1,50 @@
-# Copyright (c) 2024-2025 Ziqi Fan
-# SPDX-License-Identifier: Apache-2.0
-
-import os
+# source/realman_rl/realman_rl/tasks/manager_based/manipulation/reach/config/realman/realman_reach_env_cfg.py
 
 from isaaclab.utils import configclass
 
-from realman_rl.assets.realman import REALMAN_RMC_CFG
-from realman_rl.tasks.manager_based.manipulation.reach.reach_object_env_cfg import ReachObjectEnvCfg
-from robot_lab.assets.unitree import UNITREE_G1_29DOF_ACTION_SCALE, UNITREE_G1_29DOF_CFG
-from robot_lab.tasks.manager_based.beyondmimic.tracking_env_cfg import BeyondMimicEnvCfg
+from realman_rl.assets.realman import REALMAN_ROBOT_CFG
+from realman_rl.tasks.manager_based.manipulation.reach.reach_object_env_cfg import RealmanReachEnvCfg as ReachObjectEnvCfgBase
 
 
 @configclass
-class UnitreeG1BeyondMimicFlatEnvCfg(BeyondMimicEnvCfg):
+class RealmanReachEnvCfg(ReachObjectEnvCfgBase):
+    """
+    RealMan 机器人的 Reach 任务配置。
+    """
     def __post_init__(self):
         super().__post_init__()
 
-        self.scene.robot = UNITREE_G1_29DOF_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        self.actions.joint_pos.scale = UNITREE_G1_29DOF_ACTION_SCALE
-        self.commands.motion.motion_file = f"{os.path.dirname(__file__)}/motion/G1_Take_102.bvh_60hz.npz"
-        # self.commands.motion.motion_file = f"{os.path.dirname(__file__)}/motion/G1_gangnam_style_V01.bvh_60hz.npz"
-        self.commands.motion.anchor_body_name = "torso_link"
-        self.commands.motion.body_names = [
-            "pelvis",
-            "left_hip_roll_link",
-            "left_knee_link",
-            "left_ankle_roll_link",
-            "right_hip_roll_link",
-            "right_knee_link",
-            "right_ankle_roll_link",
-            "torso_link",
-            "left_shoulder_roll_link",
-            "left_elbow_link",
-            "left_wrist_yaw_link",
-            "right_shoulder_roll_link",
-            "right_elbow_link",
-            "right_wrist_yaw_link",
-        ]
+        # =======================================================
+        # 1. 替换机器人
+        # =======================================================
+        self.scene.robot = REALMAN_ROBOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        self.observations.policy.motion_anchor_pos_b = None
-        self.observations.policy.base_lin_vel = None
+        # =======================================================
+        # 2. 【核心修复】指定正确的末端执行器 (End Effector)
+        # =======================================================
+        # 根据报错信息，你的可用 link 有: 'r_link7', 'l_link7', 'r_Link_finger1' 等。
+        # 这里我们选择【右臂手腕 (r_link7)】作为控制目标。
+        # 如果你想控制指尖，可以改成 "r_Link_finger1"
+        target_ee_body = "r_link7"
 
-        self.episode_length_s = 30.0
+        # -------------------------------------------------------
+        # (A) 修改指令生成器 (Command) - 告诉机器人要去哪里
+        # -------------------------------------------------------
+        self.commands.ee_pose.body_names = [target_ee_body]
+
+        # -------------------------------------------------------
+        # (B) 修改观测 (Observations) - 告诉策略“手离目标有多远”
+        # -------------------------------------------------------
+        # 必须深入到 params["asset_cfg"] 里去修改 body_names
+        self.observations.policy.target_to_eef.params["asset_cfg"].body_names = [target_ee_body]
+        self.observations.critic.target_to_eef.params["asset_cfg"].body_names = [target_ee_body]
+
+        # -------------------------------------------------------
+        # (C) 修改奖励 (Rewards) - 告诉环境“手越近分越高”
+        # -------------------------------------------------------
+        self.rewards.reaching_reward.params["asset_cfg"].body_names = [target_ee_body]
+
+        # =======================================================
+        # 3. 其他调整
+        # =======================================================
+        self.actions.joint_pos.scale = 1.0

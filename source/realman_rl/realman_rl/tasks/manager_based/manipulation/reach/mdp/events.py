@@ -1,24 +1,48 @@
-# realman_rl/tasks/manager_based/manipulation/reach/mdp/events.py
+# source/realman_rl/realman_rl/tasks/manager_based/manipulation/reach/mdp/events.py
 
 from __future__ import annotations
 
+import torch
 from typing import TYPE_CHECKING
 
-from isaaclab.envs.mdp import (
-    reset_joints_by_scale,       # [标准] 按照比例缩放随机重置关节
-    reset_joints_by_offset,      # [标准] 按照偏移量随机重置关节
-    reset_root_state_uniform,    # [标准] 如果你的基座会动，用这个
-    push_by_setting_velocity,    # [标准] 给机器人一个随机扰动（推一把）
-)
+# 引入原版实现，并重命名为 _impl 以便内部调用
+from isaaclab.envs.mdp import reset_joints_by_scale as _reset_joints_by_scale_impl
 from isaaclab.managers import SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-# --- 自定义 Event 区域 ---
-# 目前 Reach 任务通常不需要自定义 Event，
-# 因为 "目标位置" (Target) 已经由 commands.py 管理了。
-# 而 "机器人关节重置" 可以直接用上面的 reset_joints_by_scale。
+# =============================================================================
+# 安全封装 (Safe Wrappers)
+# =============================================================================
 
-# 如果你未来需要 "随机化物体摩擦力" 或 "随机化物体质量"，
-# 也可以直接引用 isaaclab.envs.mdp 中的函数，不需要在这里重写。
+def reset_joints_by_scale(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor | None,
+    asset_cfg: SceneEntityCfg,
+    position_range: tuple[float, float],
+    velocity_range: tuple[float, float],
+):
+    """
+    [安全版] 按照比例缩放随机重置关节。
+    
+    修复了 Isaac Lab 原版函数在 startup 阶段因 env_ids 为 None 而导致的 crash 问题。
+    参考: randomize_joint_default_pos 的 env_ids 处理逻辑。
+    """
+    # 1. 获取 Asset (为了获取 device)
+    # 注意：这里我们只用它来确定 device，具体逻辑交给原版函数
+    asset = env.scene[asset_cfg.name]
+
+    # 2. 处理 env_ids 为 None 的情况 (Startup 阶段的关键修复)
+    if env_ids is None:
+        # 使用 torch.arange 生成所有环境的 ID，确保它是一个 Tensor
+        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+
+    # 3. 调用原版实现，传入处理过的 env_ids
+    return _reset_joints_by_scale_impl(
+        env,
+        env_ids,
+        asset_cfg=asset_cfg,
+        position_range=position_range,
+        velocity_range=velocity_range
+    )

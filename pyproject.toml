@@ -1,15 +1,85 @@
+# realman_rl/pyproject.toml
+
+# ==============================================================================
+# Build System (如果你非要在根目录运行 pip install -e .，这一段是必须的)
+# 但通常我们推荐安装子目录。保留这一段可以兼容部分工具。
+# ==============================================================================
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "realman_rl"
+name = "realman_rl_workspace"
 version = "0.1.0"
-description = "RealMan RL Project"
+description = "Workspace for RealMan RL Project"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+# 告诉工具这是一个 namespace 包结构，源码在 source 下
 [tool.setuptools.packages.find]
 where = ["source"]
-include = ["*"]
+
+# ==============================================================================
+# Code Formatter & Linter Config (基于你提供的 Isaac Lab 标准配置)
+# ==============================================================================
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]
+preview = true
+unstable = true
+
+[tool.isort]
+profile = "black"
+py_version = 310
+line_length = 120
+group_by_package = true
+skip_glob = ["docs/*", "logs/*", "_isaac_sim/*", ".vscode/*"]
+sections = [
+    "FUTURE",
+    "STDLIB",
+    "OMNIVERSE_EXTENSIONS",
+    "THIRDPARTY",
+    "ASSETS_FIRSTPARTY",
+    "FIRSTPARTY",
+    "EXTRA_FIRSTPARTY",
+    "TASK_FIRSTPARTY",
+    "LOCALFOLDER",
+]
+known_third_party = [
+    "rsl_rl", "rl_games", "ray", "stable_baselines3", "skrl", "wandb", "hydra", "omegaconf", "gymnasium", "torch", "numpy"
+]
+known_omniverse_extensions = [
+    "carb", "omni*", "isaacsim*", "pxr", "usdrt", "Semantics"
+]
+known_first_party = "realman_rl" 
+known_local_folder = "config"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["logs", "_isaac_sim", ".vscode", ".git", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "UP", "C90", "SIM", "RET"]
+ignore = ["E402", "E501", "E203", "D401", "RET504", "RET505", "SIM102", "SIM103", "SIM108", "UP006", "UP018"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pyright]
+include = ["source", "scripts"]
+exclude = ["**/__pycache__", "**/_isaac_sim", "**/docs", "**/logs", ".git", ".vscode"]
+typeCheckingMode = "basic"
+pythonVersion = "3.10"
+reportMissingImports = "none"
+reportMissingModuleSource = "none"
+reportGeneralTypeIssues = "none"
+reportOptionalMemberAccess = "warning"

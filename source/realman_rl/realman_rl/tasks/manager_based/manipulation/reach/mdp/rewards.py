@@ -45,7 +45,7 @@ def end_effector_position_tracking(
     
     # 2. 获取末端执行器位置
     robot: Articulation = env.scene[asset_cfg.name]
-    # 注意：这里的 body_names 必须在 Config 里指定为你的末端 Link (如 "link6")
+    # 注意：这里的 body_names 必须在 Config 里指定为你的末端 Link (如 "r_link7")
     body_idx = robot.find_bodies(asset_cfg.body_names)[0] 
     eef_pos_w = robot.data.body_pos_w[:, body_idx, :]
 
