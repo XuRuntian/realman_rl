@@ -1,3 +1,4 @@
+# realman_rl/tasks/manager_based/manipulation/reach/reach_object_env_cfg.py
 
 from __future__ import annotations
 
@@ -15,34 +16,26 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.terrains import TerrainImporterCfg
-
-##
-# Pre-defined configs
-##
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
+# 导入我们自定义的 MDP 模块
 import realman_rl.tasks.manager_based.manipulation.reach.mdp as mdp
+
+# 导入你的机器人配置 (假设你在 assets 文件夹下定义好了)
+# 如果你还没有定义 REALMAN_ROBOT_CFG，你需要先去 assets/realman.py 里定义它
+# 这里暂时假设你有一个默认的变量
+from realman_rl.assets import REALMAN_ROBOT_CFG 
 
 ##
 # Scene definition
 ##
 
-VELOCITY_RANGE = {
-    "x": (-0.5, 0.5),
-    "y": (-0.5, 0.5),
-    "z": (-0.2, 0.2),
-    "roll": (-0.52, 0.52),
-    "pitch": (-0.52, 0.52),
-    "yaw": (-0.78, 0.78),
-}
-
-
 @configclass
 class MySceneCfg(InteractiveSceneCfg):
-    """Configuration for the terrain scene with a legged robot."""
+    """Configuration for the reach scene."""
 
-    # ground terrain
+    # 1. 地面 (Plane)
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
         terrain_type="plane",
@@ -53,14 +46,14 @@ class MySceneCfg(InteractiveSceneCfg):
             static_friction=1.0,
             dynamic_friction=1.0,
         ),
-        visual_material=sim_utils.MdlFileCfg(
-            mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
-            project_uvw=True,
-        ),
+        debug_vis=False,
     )
-    # robots
-    robot: ArticulationCfg = MISSING
-    # lights
+
+    # 2. 机器人 (Robot)
+    # 注意：这里的 robot 变量名对应下面 asset_cfg 里的 "robot"
+    robot: ArticulationCfg = REALMAN_ROBOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+    # 3. 灯光 (Lights)
     light = AssetBaseCfg(
         prim_path="/World/light",
         spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
@@ -69,21 +62,40 @@ class MySceneCfg(InteractiveSceneCfg):
         prim_path="/World/skyLight",
         spawn=sim_utils.DomeLightCfg(color=(0.13, 0.13, 0.13), intensity=1000.0),
     )
-    contact_forces = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True, force_threshold=10.0, debug_vis=True
-    )
-
 
 ##
 # MDP settings
 ##
 
+@configclass
+class CommandsCfg:
+    """Command specifications for the MDP."""
+    # 使用我们写的 UniformPoseCommand
+    ee_pose = mdp.UniformPoseCommandCfg(
+        asset_name="robot",
+        body_names=["link6"],  # 【关键】请确保这里是你的末端执行器 Link 名称
+        resampling_time_range=(2.0, 4.0), # 每 2-4 秒换一次目标，或者设置为 (1e9, 1e9) 让它一集只变一次
+        ranges=mdp.UniformPoseCommandCfg.Ranges(
+            pos_x=(0.3, 0.6),  # 机器人前方区域
+            pos_y=(-0.4, 0.4),
+            pos_z=(0.1, 0.6),
+            roll=(0.0, 0.0),   # 简单的 Reach 任务通常不要求特定的姿态
+            pitch=(0.0, 0.0),
+            yaw=(-3.14, 3.14),
+        ),
+    )
+
 
 @configclass
 class ActionsCfg:
     """Action specifications for the MDP."""
-
-    joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], use_default_offset=True)
+    # 关节位置控制
+    joint_pos = mdp.JointPositionActionCfg(
+        asset_name="robot", 
+        joint_names=[".*"], 
+        scale=1.0, 
+        use_default_offset=True
+    )
 
 
 @configclass
@@ -94,38 +106,41 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
 
-        # observation terms (order preserved)
-        command = ObsTerm(func=mdp.generated_commands, params={"command_name": "motion"})
-        motion_anchor_pos_b = ObsTerm(
-            func=mdp.motion_anchor_pos_b, params={"command_name": "motion"}, noise=Unoise(n_min=-0.25, n_max=0.25)
-        )
-        motion_anchor_ori_b = ObsTerm(
-            func=mdp.motion_anchor_ori_b, params={"command_name": "motion"}, noise=Unoise(n_min=-0.05, n_max=0.05)
-        )
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.5, n_max=0.5))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
+        # 1. 关节感知 (Proprioception)
         joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5))
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+
+        # 2. 任务感知 (Task) - 使用我们写的 target_to_eef
+        target_to_eef = ObsTerm(
+            func=mdp.eef_to_target_pos_b, # 这个函数在 observations.py 里
+            params={
+                "command_name": "ee_pose", # 必须和 CommandsCfg 里的名字一致
+                "asset_cfg": SceneEntityCfg("robot", body_names=["link6"])
+            }
+        )
+        
+        # 3. 之前的动作 (Action History)
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
             self.enable_corruption = True
             self.concatenate_terms = True
 
+    # Critic 通常可以直接复用 Policy 的观测，或者加上 Privileged Information (无噪声)
+    # 这里为了简单，直接复制 Policy 配置但去掉噪声
     @configclass
     class CriticCfg(ObsGroup):
-        command = ObsTerm(func=mdp.generated_commands, params={"command_name": "motion"})
-        motion_anchor_pos_b = ObsTerm(func=mdp.motion_anchor_pos_b, params={"command_name": "motion"})
-        motion_anchor_ori_b = ObsTerm(func=mdp.motion_anchor_ori_b, params={"command_name": "motion"})
-        body_pos = ObsTerm(func=mdp.robot_body_pos_b, params={"command_name": "motion"})
-        body_ori = ObsTerm(func=mdp.robot_body_ori_b, params={"command_name": "motion"})
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+        target_to_eef = ObsTerm(
+            func=mdp.eef_to_target_pos_b,
+            params={
+                "command_name": "ee_pose", 
+                "asset_cfg": SceneEntityCfg("robot", body_names=["link6"])
+            }
+        )
         actions = ObsTerm(func=mdp.last_action)
 
-    # observation groups
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
 
@@ -134,44 +149,26 @@ class ObservationsCfg:
 class EventCfg:
     """Configuration for events."""
 
-    # startup
-    randomize_rigid_body_material = EventTerm(
-        func=mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": (0.3, 1.6),
-            "dynamic_friction_range": (0.3, 1.2),
-            "restitution_range": (0.0, 0.5),
-            "num_buckets": 64,
-        },
-    )
-
-    randomize_joint_default_pos = EventTerm(
-        func=mdp.randomize_joint_default_pos,
+    # 1. 启动时重置
+    reset_startup = EventTerm(
+        func=mdp.reset_joints_by_scale,
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]),
-            "pos_distribution_params": (-0.01, 0.01),
-            "operation": "add",
+            "position_range": (1.0, 1.0),
+            "velocity_range": (0.0, 0.0),
         },
     )
 
-    randomize_com_positions = EventTerm(
-        func=mdp.randomize_rigid_body_com,
-        mode="startup",
+    # 2. Episode 结束时重置 (增加一点随机性)
+    reset_robot_joints = EventTerm(
+        func=mdp.reset_joints_by_scale,
+        mode="reset",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
-            "com_range": {"x": (-0.025, 0.025), "y": (-0.05, 0.05), "z": (-0.05, 0.05)},
+            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]),
+            "position_range": (0.9, 1.1), # +/- 10% 的随机扰动
+            "velocity_range": (0.0, 0.0),
         },
-    )
-
-    # interval
-    randomize_push_robot = EventTerm(
-        func=mdp.push_by_setting_velocity,
-        mode="interval",
-        interval_range_s=(1.0, 3.0),
-        params={"velocity_range": VELOCITY_RANGE},
     )
 
 
@@ -179,61 +176,33 @@ class EventCfg:
 class RewardsCfg:
     """Reward terms for the MDP."""
 
-    # Base
-    joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-5)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-1e-1)
+    # --- 任务奖励 (正分) ---
+    reaching_reward = RewTerm(
+        func=mdp.end_effector_position_tracking, # 这个函数在 rewards.py 里
+        weight=1.0,
+        params={
+            "std": 0.25, # 精度控制
+            "command_name": "ee_pose",
+            "asset_cfg": SceneEntityCfg("robot", body_names=["link6"]),
+        },
+    )
+
+    # --- 惩罚项 (负分) ---
+    # 动作幅度惩罚 (使动作更平滑)
+    action_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    
+    # 关节加速度惩罚
+    joint_acc = RewTerm(
+        func=mdp.joint_acc_l2,
+        weight=-1.0e-4,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    
+    # 关节限位惩罚 (快撞到限位时扣分)
     joint_pos_limits = RewTerm(
         func=mdp.joint_pos_limits,
-        weight=-10.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*"])},
-    )
-
-    # Tracking
-    motion_global_anchor_pos = RewTerm(
-        func=mdp.motion_global_anchor_position_error_exp,
-        weight=0.5,
-        params={"command_name": "motion", "std": 0.3},
-    )
-    motion_global_anchor_ori = RewTerm(
-        func=mdp.motion_global_anchor_orientation_error_exp,
-        weight=0.5,
-        params={"command_name": "motion", "std": 0.4},
-    )
-    motion_body_pos = RewTerm(
-        func=mdp.motion_relative_body_position_error_exp,
-        weight=1.0,
-        params={"command_name": "motion", "std": 0.3},
-    )
-    motion_body_ori = RewTerm(
-        func=mdp.motion_relative_body_orientation_error_exp,
-        weight=1.0,
-        params={"command_name": "motion", "std": 0.4},
-    )
-    motion_body_lin_vel = RewTerm(
-        func=mdp.motion_global_body_linear_velocity_error_exp,
-        weight=1.0,
-        params={"command_name": "motion", "std": 1.0},
-    )
-    motion_body_ang_vel = RewTerm(
-        func=mdp.motion_global_body_angular_velocity_error_exp,
-        weight=1.0,
-        params={"command_name": "motion", "std": 3.14},
-    )
-
-    # Others
-    undesired_contacts = RewTerm(
-        func=mdp.undesired_contacts,
-        weight=-0.1,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_forces",
-                body_names=[
-                    r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$"
-                ],
-            ),
-            "threshold": 1.0,
-        },
+        weight=-1.0,
+        params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
 
@@ -241,34 +210,20 @@ class RewardsCfg:
 class TerminationsCfg:
     """Termination terms for the MDP."""
 
+    # 1. 超时 (Time Out)
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    anchor_pos = DoneTerm(
-        func=mdp.bad_anchor_pos_z_only,
-        params={"command_name": "motion", "threshold": 0.25},
-    )
-    anchor_ori = DoneTerm(
-        func=mdp.bad_anchor_ori,
-        params={"asset_cfg": SceneEntityCfg("robot"), "command_name": "motion", "threshold": 0.8},
-    )
-    ee_body_pos = DoneTerm(
-        func=mdp.bad_motion_body_pos_z_only,
-        params={
-            "command_name": "motion",
-            "threshold": 0.25,
-            "body_names": [
-                "left_ankle_roll_link",
-                "right_ankle_roll_link",
-                "left_wrist_yaw_link",
-                "right_wrist_yaw_link",
-            ],
-        },
+    
+    # 2. 关节超限 (Safety)
+    joint_pos_limit = DoneTerm(
+        func=mdp.joint_pos_limit,
+        params={"asset_cfg": SceneEntityCfg("robot")}
     )
 
 
 @configclass
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
-
+    # 暂时不需要课程学习
     pass
 
 
@@ -276,17 +231,18 @@ class CurriculumCfg:
 # Environment configuration
 ##
 
-
 @configclass
-class BeyondMimicEnvCfg(ManagerBasedRLEnvCfg):
-    """Configuration for the locomotion velocity-tracking environment."""
+class RealmanReachEnvCfg(ManagerBasedRLEnvCfg):
+    """Configuration for the RealMan Reach environment."""
 
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5)
+    
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
+    
     # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
@@ -295,15 +251,17 @@ class BeyondMimicEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         """Post initialization."""
-        # general settings
-        self.decimation = 4
-        self.episode_length_s = 20.0
-        # simulation settings
-        self.sim.dt = 0.005
+        # General settings
+        self.decimation = 2 # 控制频率: 100Hz (如果是 200Hz 仿真)
+        self.episode_length_s = 5.0 # Reach 任务通常很快，5秒足够
+        
+        # Simulation settings
+        self.sim.dt = 0.005 # 200Hz Physics
         self.sim.render_interval = self.decimation
+        
+        # Physics material
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
-        # viewer settings
+        
+        # Viewer settings
         self.viewer.eye = (1.5, 1.5, 1.5)
-        self.viewer.origin_type = "asset_root"
-        self.viewer.asset_name = "robot"
+        self.viewer.lookat = (0.0, 0.0, 0.5)
