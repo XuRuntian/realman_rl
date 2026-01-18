@@ -1,378 +1,158 @@
-#  用于模仿学习，纯强化学习暂时不需要这个文件
+# realman_rl/tasks/manager_based/manipulation/reach/mdp/commands.py
+
 from __future__ import annotations
 
-import math
-import numpy as np
-import os
 import torch
-from collections.abc import Sequence
+from typing import TYPE_CHECKING, Sequence
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
 
-from isaaclab.assets import Articulation
 from isaaclab.managers import CommandTerm, CommandTermCfg
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.markers.config import FRAME_MARKER_CFG
+from isaaclab.markers.config import FRAME_MARKER_CFG  # 默认的坐标轴标记
 from isaaclab.utils import configclass
 from isaaclab.utils.math import (
-    quat_apply,
-    quat_error_magnitude,
+    combine_frame_transforms,
     quat_from_euler_xyz,
-    quat_inv,
-    quat_mul,
     sample_uniform,
-    yaw_quat,
 )
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
-class MotionLoader:
-    def __init__(self, motion_file: str, body_indexes: Sequence[int], device: str = "cpu"):
-        assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
-        data = np.load(motion_file)
-        self.fps = data["fps"]
-        self.joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
-        self.joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
-        self._body_pos_w = torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device)
-        self._body_quat_w = torch.tensor(data["body_quat_w"], dtype=torch.float32, device=device)
-        self._body_lin_vel_w = torch.tensor(data["body_lin_vel_w"], dtype=torch.float32, device=device)
-        self._body_ang_vel_w = torch.tensor(data["body_ang_vel_w"], dtype=torch.float32, device=device)
-        self._body_indexes = body_indexes
-        self.time_step_total = self.joint_pos.shape[0]
+class UniformPoseCommand(CommandTerm):
+    """
+    通用姿态指令生成器 (Uniform Pose Command Generator).
 
-    @property
-    def body_pos_w(self) -> torch.Tensor:
-        return self._body_pos_w[:, self._body_indexes]
+    功能：
+    1. 在指定的笛卡尔空间范围 (ranges) 内随机采样目标位置 (x, y, z)。
+    2. 在指定的欧拉角范围 (ranges) 内随机采样目标姿态 (roll, pitch, yaw)。
+    3. 支持可视化目标点。
 
-    @property
-    def body_quat_w(self) -> torch.Tensor:
-        return self._body_quat_w[:, self._body_indexes]
+    这个类非常适合 Reach（到达）、Push（推）、Pick（抓）等任务的目标生成。
+    """
 
-    @property
-    def body_lin_vel_w(self) -> torch.Tensor:
-        return self._body_lin_vel_w[:, self._body_indexes]
+    cfg: UniformPoseCommandCfg
 
-    @property
-    def body_ang_vel_w(self) -> torch.Tensor:
-        return self._body_ang_vel_w[:, self._body_indexes]
-
-
-class MotionCommand(CommandTerm):
-    cfg: MotionCommandCfg
-
-    def __init__(self, cfg: MotionCommandCfg, env: ManagerBasedRLEnv):
+    def __init__(self, cfg: UniformPoseCommandCfg, env: ManagerBasedRLEnv):
+        # 初始化父类
         super().__init__(cfg, env)
 
-        self.robot: Articulation = env.scene[cfg.asset_name]
-        self.robot_anchor_body_index = self.robot.body_names.index(self.cfg.anchor_body_name)
-        self.motion_anchor_body_index = self.cfg.body_names.index(self.cfg.anchor_body_name)
-        self.body_indexes = torch.tensor(
-            self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0], dtype=torch.long, device=self.device
-        )
+        # 1. 定义指令缓冲区 (Buffer)
+        # command 格式通常为: [pos_x, pos_y, pos_z, quat_w, quat_x, quat_y, quat_z] (7维)
+        # 或者简化为 [pos_x, pos_y, pos_z] (3维)，取决于 cfg.resampling_time_range
+        # 这里我们统一存储 7 维 (Pos + Quat)，具体 Observation 怎么用由 observation term 决定
+        self.pose_command_w = torch.zeros(self.num_envs, 7, device=self.device)
+        
+        # 2. 解析配置范围
+        # 将配置字典转换为 Tensor 方便计算
+        self.pos_ranges = torch.zeros(self.num_envs, 3, 2, device=self.device)
+        self.pos_ranges[:, 0, :] = torch.tensor(self.cfg.ranges.pos_x, device=self.device)
+        self.pos_ranges[:, 1, :] = torch.tensor(self.cfg.ranges.pos_y, device=self.device)
+        self.pos_ranges[:, 2, :] = torch.tensor(self.cfg.ranges.pos_z, device=self.device)
 
-        self.motion = MotionLoader(self.cfg.motion_file, self.body_indexes, device=self.device)
-        self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        self.body_pos_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 3, device=self.device)
-        self.body_quat_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 4, device=self.device)
-        self.body_quat_relative_w[:, :, 0] = 1.0
+        self.rot_ranges = torch.zeros(self.num_envs, 3, 2, device=self.device)
+        self.rot_ranges[:, 0, :] = torch.tensor(self.cfg.ranges.roll, device=self.device)
+        self.rot_ranges[:, 1, :] = torch.tensor(self.cfg.ranges.pitch, device=self.device)
+        self.rot_ranges[:, 2, :] = torch.tensor(self.cfg.ranges.yaw, device=self.device)
 
-        self.bin_count = int(self.motion.time_step_total // (1 / (env.cfg.decimation * env.cfg.sim.dt))) + 1
-        self.bin_failed_count = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
-        self._current_bin_failed = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
-        self.kernel = torch.tensor(
-            [self.cfg.adaptive_lambda**i for i in range(self.cfg.adaptive_kernel_size)], device=self.device
-        )
-        self.kernel = self.kernel / self.kernel.sum()
-
-        self.metrics["error_anchor_pos"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_anchor_rot"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_anchor_lin_vel"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_anchor_ang_vel"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_body_pos"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_body_rot"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_joint_pos"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["error_joint_vel"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["sampling_entropy"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["sampling_top1_prob"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["sampling_top1_bin"] = torch.zeros(self.num_envs, device=self.device)
-
-    @property
-    def command(self) -> torch.Tensor:  # TODO Consider again if this is the best observation
-        return torch.cat([self.joint_pos, self.joint_vel], dim=1)
-
-    @property
-    def joint_pos(self) -> torch.Tensor:
-        return self.motion.joint_pos[self.time_steps]
-
-    @property
-    def joint_vel(self) -> torch.Tensor:
-        return self.motion.joint_vel[self.time_steps]
-
-    @property
-    def body_pos_w(self) -> torch.Tensor:
-        return self.motion.body_pos_w[self.time_steps] + self._env.scene.env_origins[:, None, :]
-
-    @property
-    def body_quat_w(self) -> torch.Tensor:
-        return self.motion.body_quat_w[self.time_steps]
-
-    @property
-    def body_lin_vel_w(self) -> torch.Tensor:
-        return self.motion.body_lin_vel_w[self.time_steps]
-
-    @property
-    def body_ang_vel_w(self) -> torch.Tensor:
-        return self.motion.body_ang_vel_w[self.time_steps]
-
-    @property
-    def anchor_pos_w(self) -> torch.Tensor:
-        return self.motion.body_pos_w[self.time_steps, self.motion_anchor_body_index] + self._env.scene.env_origins
-
-    @property
-    def anchor_quat_w(self) -> torch.Tensor:
-        return self.motion.body_quat_w[self.time_steps, self.motion_anchor_body_index]
-
-    @property
-    def anchor_lin_vel_w(self) -> torch.Tensor:
-        return self.motion.body_lin_vel_w[self.time_steps, self.motion_anchor_body_index]
-
-    @property
-    def anchor_ang_vel_w(self) -> torch.Tensor:
-        return self.motion.body_ang_vel_w[self.time_steps, self.motion_anchor_body_index]
-
-    @property
-    def robot_joint_pos(self) -> torch.Tensor:
-        return self.robot.data.joint_pos
-
-    @property
-    def robot_joint_vel(self) -> torch.Tensor:
-        return self.robot.data.joint_vel
-
-    @property
-    def robot_body_pos_w(self) -> torch.Tensor:
-        return self.robot.data.body_pos_w[:, self.body_indexes]
-
-    @property
-    def robot_body_quat_w(self) -> torch.Tensor:
-        return self.robot.data.body_quat_w[:, self.body_indexes]
-
-    @property
-    def robot_body_lin_vel_w(self) -> torch.Tensor:
-        return self.robot.data.body_lin_vel_w[:, self.body_indexes]
-
-    @property
-    def robot_body_ang_vel_w(self) -> torch.Tensor:
-        return self.robot.data.body_ang_vel_w[:, self.body_indexes]
-
-    @property
-    def robot_anchor_pos_w(self) -> torch.Tensor:
-        return self.robot.data.body_pos_w[:, self.robot_anchor_body_index]
-
-    @property
-    def robot_anchor_quat_w(self) -> torch.Tensor:
-        return self.robot.data.body_quat_w[:, self.robot_anchor_body_index]
-
-    @property
-    def robot_anchor_lin_vel_w(self) -> torch.Tensor:
-        return self.robot.data.body_lin_vel_w[:, self.robot_anchor_body_index]
-
-    @property
-    def robot_anchor_ang_vel_w(self) -> torch.Tensor:
-        return self.robot.data.body_ang_vel_w[:, self.robot_anchor_body_index]
-
-    def _update_metrics(self):
-        self.metrics["error_anchor_pos"] = torch.norm(self.anchor_pos_w - self.robot_anchor_pos_w, dim=-1)
-        self.metrics["error_anchor_rot"] = quat_error_magnitude(self.anchor_quat_w, self.robot_anchor_quat_w)
-        self.metrics["error_anchor_lin_vel"] = torch.norm(self.anchor_lin_vel_w - self.robot_anchor_lin_vel_w, dim=-1)
-        self.metrics["error_anchor_ang_vel"] = torch.norm(self.anchor_ang_vel_w - self.robot_anchor_ang_vel_w, dim=-1)
-
-        self.metrics["error_body_pos"] = torch.norm(self.body_pos_relative_w - self.robot_body_pos_w, dim=-1).mean(
-            dim=-1
-        )
-        self.metrics["error_body_rot"] = quat_error_magnitude(self.body_quat_relative_w, self.robot_body_quat_w).mean(
-            dim=-1
-        )
-
-        self.metrics["error_body_lin_vel"] = torch.norm(self.body_lin_vel_w - self.robot_body_lin_vel_w, dim=-1).mean(
-            dim=-1
-        )
-        self.metrics["error_body_ang_vel"] = torch.norm(self.body_ang_vel_w - self.robot_body_ang_vel_w, dim=-1).mean(
-            dim=-1
-        )
-
-        self.metrics["error_joint_pos"] = torch.norm(self.joint_pos - self.robot_joint_pos, dim=-1)
-        self.metrics["error_joint_vel"] = torch.norm(self.joint_vel - self.robot_joint_vel, dim=-1)
-
-    def _adaptive_sampling(self, env_ids: Sequence[int]):
-        episode_failed = self._env.termination_manager.terminated[env_ids]
-        if torch.any(episode_failed):
-            current_bin_index = torch.clamp(
-                (self.time_steps * self.bin_count) // max(self.motion.time_step_total, 1), 0, self.bin_count - 1
-            )
-            fail_bins = current_bin_index[env_ids][episode_failed]
-            self._current_bin_failed[:] = torch.bincount(fail_bins, minlength=self.bin_count)
-
-        # Sample
-        sampling_probabilities = self.bin_failed_count + self.cfg.adaptive_uniform_ratio / float(self.bin_count)
-        sampling_probabilities = torch.nn.functional.pad(
-            sampling_probabilities.unsqueeze(0).unsqueeze(0),
-            (0, self.cfg.adaptive_kernel_size - 1),  # Non-causal kernel
-            mode="replicate",
-        )
-        sampling_probabilities = torch.nn.functional.conv1d(sampling_probabilities, self.kernel.view(1, 1, -1)).view(-1)
-
-        sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
-
-        sampled_bins = torch.multinomial(sampling_probabilities, len(env_ids), replacement=True)
-
-        self.time_steps[env_ids] = (
-            (sampled_bins + sample_uniform(0.0, 1.0, (len(env_ids),), device=self.device))
-            / self.bin_count
-            * (self.motion.time_step_total - 1)
-        ).long()
-
-        # Metrics
-        H = -(sampling_probabilities * (sampling_probabilities + 1e-12).log()).sum()
-        H_norm = H / math.log(self.bin_count)
-        pmax, imax = sampling_probabilities.max(dim=0)
-        self.metrics["sampling_entropy"][:] = H_norm
-        self.metrics["sampling_top1_prob"][:] = pmax
-        self.metrics["sampling_top1_bin"][:] = imax.float() / self.bin_count
+        # 3. 初始化 Metrics (可选，用于记录调试信息)
+        self.metrics["error_pos"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["error_rot"] = torch.zeros(self.num_envs, device=self.device)
 
     def _resample_command(self, env_ids: Sequence[int]):
-        if len(env_ids) == 0:
-            return
-        self._adaptive_sampling(env_ids)
+        """
+        核心逻辑：当环境 Reset 或倒计时结束时，重新生成目标。
+        """
+        # 1. 采样位置 (Position)
+        # 在 [min, max] 范围内均匀采样
+        r = torch.rand(len(env_ids), 3, device=self.device)
+        pos_random = (self.pos_ranges[env_ids, :, 1] - self.pos_ranges[env_ids, :, 0]) * r + self.pos_ranges[env_ids, :, 0]
 
-        root_pos = self.body_pos_w[:, 0].clone()
-        root_ori = self.body_quat_w[:, 0].clone()
-        root_lin_vel = self.body_lin_vel_w[:, 0].clone()
-        root_ang_vel = self.body_ang_vel_w[:, 0].clone()
+        # 2. 采样姿态 (Orientation)
+        # 同样在 Euler 角度范围内采样，然后转为四元数
+        r_rot = torch.rand(len(env_ids), 3, device=self.device)
+        euler_random = (self.rot_ranges[env_ids, :, 1] - self.rot_ranges[env_ids, :, 0]) * r_rot + self.rot_ranges[env_ids, :, 0]
+        quat_random = quat_from_euler_xyz(euler_random[:, 0], euler_random[:, 1], euler_random[:, 2])
 
-        range_list = [self.cfg.pose_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
-        ranges = torch.tensor(range_list, device=self.device)
-        rand_samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device)
-        root_pos[env_ids] += rand_samples[:, 0:3]
-        orientations_delta = quat_from_euler_xyz(rand_samples[:, 3], rand_samples[:, 4], rand_samples[:, 5])
-        root_ori[env_ids] = quat_mul(orientations_delta, root_ori[env_ids])
-        range_list = [self.cfg.velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
-        ranges = torch.tensor(range_list, device=self.device)
-        rand_samples = sample_uniform(ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=self.device)
-        root_lin_vel[env_ids] += rand_samples[:, :3]
-        root_ang_vel[env_ids] += rand_samples[:, 3:]
-
-        joint_pos = self.joint_pos.clone()
-        joint_vel = self.joint_vel.clone()
-
-        joint_pos += sample_uniform(*self.cfg.joint_position_range, joint_pos.shape, joint_pos.device)
-        soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids]
-        joint_pos[env_ids] = torch.clip(
-            joint_pos[env_ids], soft_joint_pos_limits[:, :, 0], soft_joint_pos_limits[:, :, 1]
-        )
-        self.robot.write_joint_state_to_sim(joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids)
-        self.robot.write_root_state_to_sim(
-            torch.cat([root_pos[env_ids], root_ori[env_ids], root_lin_vel[env_ids], root_ang_vel[env_ids]], dim=-1),
-            env_ids=env_ids,
-        )
+        # 3. 处理参考系 (可选)
+        # 如果你想让生成的点是相对于机器人的 (比如在机器人前方 0.5m)，需要结合 env origins
+        # Isaac Lab 的 Command 通常是 Global Frame 下的
+        # 这里我们假设 ranges 是相对于 env_origins 的偏移量
+        self.pose_command_w[env_ids, :3] = pos_random + self._env.scene.env_origins[env_ids]
+        self.pose_command_w[env_ids, 3:] = quat_random
 
     def _update_command(self):
-        self.time_steps += 1
-        env_ids = torch.where(self.time_steps >= self.motion.time_step_total)[0]
-        self._resample_command(env_ids)
+        """
+        每一步仿真都会调用。通常用于移动目标。
+        对于静态 Reach 任务，这里不需要做任何事，只需保持 command 不变。
+        """
+        pass
 
-        anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
-        anchor_quat_w_repeat = self.anchor_quat_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
-        robot_anchor_pos_w_repeat = self.robot_anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
-        robot_anchor_quat_w_repeat = self.robot_anchor_quat_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
-
-        delta_pos_w = robot_anchor_pos_w_repeat
-        delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
-        delta_ori_w = yaw_quat(quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat)))
-
-        self.body_quat_relative_w = quat_mul(delta_ori_w, self.body_quat_w)
-        self.body_pos_relative_w = delta_pos_w + quat_apply(delta_ori_w, self.body_pos_w - anchor_pos_w_repeat)
-
-        self.bin_failed_count = (
-            self.cfg.adaptive_alpha * self._current_bin_failed + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count
-        )
-        self._current_bin_failed.zero_()
+    @property
+    def command(self) -> torch.Tensor:
+        """
+        暴露给外部 (Observation/Reward) 使用的接口。
+        返回完整的 [x, y, z, qw, qx, qy, qz]
+        """
+        return self.pose_command_w
 
     def _set_debug_vis_impl(self, debug_vis: bool):
+        """
+        处理可视化 (Debug Visualization)。
+        """
+        # 如果需要显示，且没有初始化过 visualizer
         if debug_vis:
-            if not hasattr(self, "current_anchor_visualizer"):
-                self.current_anchor_visualizer = VisualizationMarkers(
-                    self.cfg.anchor_visualizer_cfg.replace(prim_path="/Visuals/Command/current/anchor")
-                )
-                self.goal_anchor_visualizer = VisualizationMarkers(
-                    self.cfg.anchor_visualizer_cfg.replace(prim_path="/Visuals/Command/goal/anchor")
-                )
-
-                self.current_body_visualizers = []
-                self.goal_body_visualizers = []
-                for name in self.cfg.body_names:
-                    self.current_body_visualizers.append(
-                        VisualizationMarkers(
-                            self.cfg.body_visualizer_cfg.replace(prim_path="/Visuals/Command/current/" + name)
-                        )
-                    )
-                    self.goal_body_visualizers.append(
-                        VisualizationMarkers(
-                            self.cfg.body_visualizer_cfg.replace(prim_path="/Visuals/Command/goal/" + name)
-                        )
-                    )
-
-            self.current_anchor_visualizer.set_visibility(True)
-            self.goal_anchor_visualizer.set_visibility(True)
-            for i in range(len(self.cfg.body_names)):
-                self.current_body_visualizers[i].set_visibility(True)
-                self.goal_body_visualizers[i].set_visibility(True)
-
+            if not hasattr(self, "goal_visualizer"):
+                # 使用配置中的 marker 配置创建 visualizer
+                self.goal_visualizer = VisualizationMarkers(self.cfg.visualizer_cfg)
+            self.goal_visualizer.set_visibility(True)
         else:
-            if hasattr(self, "current_anchor_visualizer"):
-                self.current_anchor_visualizer.set_visibility(False)
-                self.goal_anchor_visualizer.set_visibility(False)
-                for i in range(len(self.cfg.body_names)):
-                    self.current_body_visualizers[i].set_visibility(False)
-                    self.goal_body_visualizers[i].set_visibility(False)
+            if hasattr(self, "goal_visualizer"):
+                self.goal_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
-        if not self.robot.is_initialized:
-            return
-
-        self.current_anchor_visualizer.visualize(self.robot_anchor_pos_w, self.robot_anchor_quat_w)
-        self.goal_anchor_visualizer.visualize(self.anchor_pos_w, self.anchor_quat_w)
-
-        for i in range(len(self.cfg.body_names)):
-            self.current_body_visualizers[i].visualize(self.robot_body_pos_w[:, i], self.robot_body_quat_w[:, i])
-            self.goal_body_visualizers[i].visualize(self.body_pos_relative_w[:, i], self.body_quat_relative_w[:, i])
+        """
+        渲染循环的回调，用于更新 Marker 的位置。
+        """
+        if hasattr(self, "goal_visualizer"):
+            # 将 Marker 移动到当前的 command 位置
+            self.goal_visualizer.visualize(
+                self.pose_command_w[:, :3], 
+                self.pose_command_w[:, 3:]
+            )
 
 
 @configclass
-class MotionCommandCfg(CommandTermCfg):
-    """Configuration for the motion command."""
+class UniformPoseCommandCfg(CommandTermCfg):
+    """Configuration for the uniform pose command generator."""
+    
+    class_type: type = UniformPoseCommand
 
-    class_type: type = MotionCommand
+    # 1. 定义采样范围的数据结构
+    @configclass
+    class Ranges:
+        # 默认范围 (相对于环境原点)
+        pos_x: tuple[float, float] = (0.3, 0.6)   # 机器人前方 0.3 到 0.6 米
+        pos_y: tuple[float, float] = (-0.3, 0.3)  # 左右各 0.3 米
+        pos_z: tuple[float, float] = (0.1, 0.5)   # 高度 0.1 到 0.5 米
+        
+        # 欧拉角范围 (弧度)
+        roll: tuple[float, float] = (0.0, 0.0)    # 保持水平
+        pitch: tuple[float, float] = (0.0, 0.0)
+        yaw: tuple[float, float] = (-3.14, 3.14)  # 任意旋转
 
-    asset_name: str = MISSING
+    # 将上面的结构实例化
+    ranges: Ranges = Ranges()
 
-    motion_file: str = MISSING
-    anchor_body_name: str = MISSING
-    body_names: list[str] = MISSING
+    # 2. 可视化配置
+    # 默认使用坐标轴显示目标点，prim_path 必须唯一
+    visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/target_pose"
+    )
+    # 调整 Marker 大小
+    visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
 
-    pose_range: dict[str, tuple[float, float]] = {}
-    velocity_range: dict[str, tuple[float, float]] = {}
-
-    joint_position_range: tuple[float, float] = (-0.52, 0.52)
-
-    adaptive_kernel_size: int = 1
-    adaptive_lambda: float = 0.8
-    adaptive_uniform_ratio: float = 0.1
-    adaptive_alpha: float = 0.001
-
-    anchor_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/pose")
-    anchor_visualizer_cfg.markers["frame"].scale = (0.2, 0.2, 0.2)
-
-    body_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(prim_path="/Visuals/Command/pose")
-    body_visualizer_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
+    # 3. 基础配置 (继承自 CommandTermCfg)
+    # resample_frequency_range: 重新采样的频率 (通常 Reach 任务不需要中途变，除非做 Tracking)
+    # 对于 Episodic 任务，通常设置为无穷大或仅在 reset 时触发

@@ -1,54 +1,24 @@
-# Copyright (c) 2024-2025 Ziqi Fan
-# SPDX-License-Identifier: Apache-2.0
+# realman_rl/tasks/manager_based/manipulation/reach/mdp/events.py
 
 from __future__ import annotations
 
-import torch
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-from isaaclab.assets import Articulation
-from isaaclab.envs.mdp.events import _randomize_prop_by_op
+from isaaclab.envs.mdp import (
+    reset_joints_by_scale,       # [标准] 按照比例缩放随机重置关节
+    reset_joints_by_offset,      # [标准] 按照偏移量随机重置关节
+    reset_root_state_uniform,    # [标准] 如果你的基座会动，用这个
+    push_by_setting_velocity,    # [标准] 给机器人一个随机扰动（推一把）
+)
 from isaaclab.managers import SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
+# --- 自定义 Event 区域 ---
+# 目前 Reach 任务通常不需要自定义 Event，
+# 因为 "目标位置" (Target) 已经由 commands.py 管理了。
+# 而 "机器人关节重置" 可以直接用上面的 reset_joints_by_scale。
 
-def randomize_joint_default_pos(
-    env: ManagerBasedEnv,
-    env_ids: torch.Tensor | None,
-    asset_cfg: SceneEntityCfg,
-    pos_distribution_params: tuple[float, float] | None = None,
-    operation: Literal["add", "scale", "abs"] = "abs",
-    distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
-):
-    """
-    Randomize the joint default positions which may be different from URDF due to calibration errors.
-    """
-    # extract the used quantities (to enable type-hinting)
-    asset: Articulation = env.scene[asset_cfg.name]
-
-    # save nominal value for export
-    asset.data.default_joint_pos_nominal = torch.clone(asset.data.default_joint_pos[0])
-
-    # resolve environment ids
-    if env_ids is None:
-        env_ids = torch.arange(env.scene.num_envs, device=asset.device)
-
-    # resolve joint indices
-    if asset_cfg.joint_ids == slice(None):
-        joint_ids = slice(None)  # for optimization purposes
-    else:
-        joint_ids = torch.tensor(asset_cfg.joint_ids, dtype=torch.int, device=asset.device)
-
-    if pos_distribution_params is not None:
-        pos = asset.data.default_joint_pos.to(asset.device).clone()
-        pos = _randomize_prop_by_op(
-            pos, pos_distribution_params, env_ids, joint_ids, operation=operation, distribution=distribution
-        )[env_ids][:, joint_ids]
-
-        if env_ids != slice(None) and joint_ids != slice(None):
-            env_ids = env_ids[:, None] # for broadcasting
-        asset.data.default_joint_pos[env_ids, joint_ids] = pos
-        # update the offset in action since it is not updated automatically
-        env.action_manager.get_term("joint_pos")._offset[env_ids, joint_ids] = pos
+# 如果你未来需要 "随机化物体摩擦力" 或 "随机化物体质量"，
+# 也可以直接引用 isaaclab.envs.mdp 中的函数，不需要在这里重写。

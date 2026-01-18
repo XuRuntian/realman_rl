@@ -1,111 +1,134 @@
-# Copyright (c) 2024-2025 Realman RL Project
-# description: Custom observation functions for manipulation tasks.
+# realman_rl/tasks/manager_based/manipulation/reach/mdp/observations.py
 
 from __future__ import annotations
 
 import torch
 from typing import TYPE_CHECKING
 
-from isaaclab.assets import Articulation, RigidObject
+from isaaclab.assets import Articulation
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.math import subtract_frame_transforms
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-# ==============================================================================
-#  相对于机器人基座 (Base Frame) 的观测
-#  (这对于训练非常重要，因为它让训练结果具有"平移不变性")
-# ==============================================================================
+# =============================================================================
+# 辅助函数：获取目标位置
+# =============================================================================
 
-def end_effector_pos_in_robot_root_frame(
+def target_position_w(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
+    """获取世界坐标系下的目标位置。"""
+    # 从 Command Manager 获取指令
+    # 我们之前的 UniformPoseCommand 返回的是 [x, y, z, qw, qx, qy, qz]
+    command = env.command_manager.get_command(command_name)
+    return command[:, :3]
+
+def target_orientation_w(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
+    """获取世界坐标系下的目标姿态(四元数)。"""
+    command = env.command_manager.get_command(command_name)
+    return command[:, 3:7]
+
+# =============================================================================
+# 核心观测：相对位置
+# =============================================================================
+
+def eef_pos_b(
     env: ManagerBasedEnv, 
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    ee_body_name: str = "link_tcp" # 默认值，实际使用时在 Config 中覆盖
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     """
-    获取机械臂末端(End-Effector)相对于机器人基座(Root)的位置。
-    
-    Args:
-        robot_cfg: 机器人的配置，用于查找资产。
-        ee_body_name: 机械臂末端刚体的名字 (在URDF里的 link name)。
+    获取末端执行器(End-Effector)相对于机器人基座(Base)的位置。
+    这对机械臂任务很有用，让它知道手在哪里。
     """
-    # 1. 获取机器人的资产对象
-    robot: Articulation = env.scene[robot_cfg.name]
+    robot: Articulation = env.scene[asset_cfg.name]
     
-    # 2. 获取末端执行器的索引 (通过名字找 ID)
-    # 注意：这里假设只有一个刚体作为末端，如果有多个需要调整逻辑
-    ee_id = robot.find_bodies(ee_body_name)[0][0]
-
-    # 3. 获取数据 (均为世界坐标系 World Frame)
-    # 机器人基座的位置和姿态
+    # 获取基座（Root）和末端（Body）的世界坐标
     root_pos_w = robot.data.root_pos_w
     root_quat_w = robot.data.root_quat_w
     
-    # 末端执行器的位置和姿态
-    ee_pos_w = robot.data.body_pos_w[:, ee_id]
-    ee_quat_w = robot.data.body_quat_w[:, ee_id]
+    # 找到末端执行器的索引 (需要在配置文件里指定 body_names=["link_name"])
+    # 如果没指定 body_names，默认取所有 bodies，这通常不是我们想要的
+    body_idx = robot.find_bodies(asset_cfg.body_names)[0]
+    eef_pos_w = robot.data.body_pos_w[:, body_idx, :]
+    eef_quat_w = robot.data.body_quat_w[:, body_idx, :] # 这一步虽然这里没用到，但保持对称性
 
-    # 4. 坐标变换: World -> Robot Base
-    # 公式: Pos_local = Inverse(Base_Transform) * (Pos_world - Base_pos)
-    # Isaac Lab 提供了 subtract_frame_transforms 帮我们做这个数学运算
-    ee_pos_b, _ = subtract_frame_transforms(
-        root_pos_w, root_quat_w, ee_pos_w, ee_quat_w
+    # 将末端位置转换到基座坐标系下
+    eef_pos_b, _ = subtract_frame_transforms(
+        root_pos_w, root_quat_w, eef_pos_w, eef_quat_w
     )
+    
+    return eef_pos_b
 
-    return ee_pos_b
 
-
-def object_pos_in_robot_root_frame(
-    env: ManagerBasedEnv,
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+def target_pos_b(
+    env: ManagerBasedEnv, 
+    command_name: str = "ee_pose",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     """
-    获取目标物体(Object)相对于机器人基座(Root)的位置。
+    获取目标(Target)相对于机器人基座(Base)的位置。
     """
-    # 1. 获取资产
-    robot: Articulation = env.scene[robot_cfg.name]
-    # 注意：目标可能是 RigidObject (如方块) 也可以是 Articulation
-    obj = env.scene[object_cfg.name]
-
-    # 2. 获取数据 (世界坐标系)
+    robot: Articulation = env.scene[asset_cfg.name]
+    
+    # 1. 获取目标世界坐标
+    target_pos_w = target_position_w(env, command_name)
+    target_quat_w = target_orientation_w(env, command_name)
+    
+    # 2. 获取机器人基座世界坐标
     root_pos_w = robot.data.root_pos_w
     root_quat_w = robot.data.root_quat_w
 
-    # 获取物体位置 (如果是 RigidObject，通常用 root_pos_w)
-    if isinstance(obj, RigidObject) or isinstance(obj, Articulation):
-        obj_pos_w = obj.data.root_pos_w
-        obj_quat_w = obj.data.root_quat_w
-    else:
-        raise ValueError(f"Unsupported object type: {type(obj)}")
-
-    # 3. 坐标变换
-    obj_pos_b, _ = subtract_frame_transforms(
-        root_pos_w, root_quat_w, obj_pos_w, obj_quat_w
+    # 3. 转换坐标系: Target in Base Frame
+    # 数学含义: R_base^T * (P_target - P_base)
+    target_pos_in_base, _ = subtract_frame_transforms(
+        root_pos_w, root_quat_w, target_pos_w, target_quat_w
     )
+    
+    return target_pos_in_base
 
-    return obj_pos_b
 
-
-# ==============================================================================
-#  向量差观测 (Vector Diff)
-#  (强化学习非常喜欢这个，因为它直接告诉网络"误差"是多少)
-# ==============================================================================
-
-def end_effector_to_object_vector(
+def eef_to_target_pos_b(
     env: ManagerBasedEnv,
-    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
-    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
-    ee_body_name: str = "link_tcp"
+    command_name: str = "ee_pose",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     """
-    计算从末端执行器指向目标物体的向量 (在机器人基座坐标系下)。
-    Vector = Object_Pos - EE_Pos
+    【最关键的观测】获取 "从末端指向目标" 的向量 (Vector from EE to Target)。
+    
+    这个观测对训练收敛至关重要，它直接告诉 Policy 误差方向。
     """
-    # 复用上面的函数计算两个位置
-    ee_pos_b = end_effector_pos_in_robot_root_frame(env, robot_cfg, ee_body_name)
-    obj_pos_b = object_pos_in_robot_root_frame(env, robot_cfg, object_cfg)
-
-    # 计算向量差
-    return obj_pos_b - ee_pos_b
+    robot: Articulation = env.scene[asset_cfg.name]
+    
+    # 1. 目标位置 (World)
+    target_pos_w = target_position_w(env, command_name)
+    
+    # 2. 末端位置 (World)
+    body_idx = robot.find_bodies(asset_cfg.body_names)[0]
+    eef_pos_w = robot.data.body_pos_w[:, body_idx, :]
+    
+    # 3. 向量差 (World Frame)
+    error_vec_w = target_pos_w - eef_pos_w
+    
+    # 4. (可选) 如果你的机器人基座是固定的，可以直接返回 error_vec_w。
+    # 如果机器人基座会动（比如移动底盘），最好把它转到基座坐标系下。
+    # 这里我们演示转到基座坐标系：
+    root_quat_w = robot.data.root_quat_w
+    
+    # 使用 subtract_frame_transforms 的一个小技巧：
+    # 把 error_vec 当作一个相对于原点的位置，减去原点(0,0,0)的变换，其实就是旋转向量
+    # 或者更简单的：直接用 quat_rotate_inverse (Isaac Lab 有对应工具)
+    # 这里为了通用性，还是用 subtract_frame_transforms
+    
+    # 这里的逻辑是：计算 Error 相对于 Base 的坐标
+    # 但更简单的做法是：只要知道 "Target相对于EE" 的向量即可。
+    # 让我们直接返回 World Frame 下的误差向量，对于固定臂这通常足够了。
+    # 更好的做法通常是返回 "Target position in EE frame" (目标在手坐标系下的位置)
+    
+    # --- 方案 B: Target in End-Effector Frame (推荐) ---
+    eef_quat_w = robot.data.body_quat_w[:, body_idx, :]
+    
+    target_pos_in_eef, _ = subtract_frame_transforms(
+        eef_pos_w, eef_quat_w, target_pos_w, torch.zeros_like(eef_quat_w) # 姿态由于没对齐需求，暂时忽略
+    )
+    
+    return target_pos_in_eef
