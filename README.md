@@ -4,6 +4,10 @@
 conda deactivate  && source ~/IsaacLab/.venv/bin/activate
 ${ISAACSIM_PATH}/isaac-sim.sh
 ```
+- 安装环境
+```
+cd realman_rl && uv pip install -e source/realman_rl
+```
 - 查看注册的环境
 ```
 python scripts/list_envs.py
